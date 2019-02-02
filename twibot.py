@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
 from selenium import webdriver as wd
 from bs4 import BeautifulSoup as bs
-import time
-
-class Error(Exception):
-    def __init__(self, name:str, desc:str):
-        super().__init__()
-        self.msg = 'Error in module Twibot[In function:%s]: %s' % (name, desc)
-        return
+import time, os, errno
 
 class Tweet(object):
     def __init__(self, id, text=None, username=None, user_screen_name=None, date=0, retweets=0, likes=0, replies=0):
@@ -116,18 +110,20 @@ class Twibot(wd.Chrome):
     sources = list()
 
     def add_source(self, name: str, path: str):
-        new = Source_Adress(name, path)
-        if new not in self.sources:
-            self.sources.append(new)
-        else:
-            raise Error('Twibot.add_source', 'Trying to add an source already added')
+        for i in self.sources:
+            if name == i.name:
+                #print('Not allowed action in module Twibot[In function: Twibot.add_source]: Trying to add a source already added')
+                return
+
+        self.sources.append(Source_Adress(name, path))
+            
         return
 
     def crawl(self):
         for src in self.sources:
             self.get(src.path)
             
-            self.scroll_down()
+            self.scroll_down(0)
 
             tweets = driver.parse_tweets()
 
@@ -170,7 +166,16 @@ class Twibot(wd.Chrome):
         return
 
     def save_tweets_as_csv(self, src: Source_Adress, tweets: list):
-        with open('%s_data_base.csv' % src.name, 'w+') as db_file:
+        dir = './data/collected/%s' % src.name
+
+        try:
+            if not os.path.exists(dir):
+                os.makedirs(dir)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+
+        with open('%s/%s_data_base.csv' % (dir, src.name), 'w+') as db_file:
             db_file.write('"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"\n' %
                         ('id', 'text', 'user_screen_name', 'username', 'date', 'retweets', 'likes', 'replies'))
             for tweet in tweets:
