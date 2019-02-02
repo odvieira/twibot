@@ -23,9 +23,11 @@ class Twibot(wd.Chrome):
 
         # click the "Log In" button:
         self.find_element_by_class_name("EdgeButtom--medium").click()
+        return
             
     def close(self):
         super().close()
+        return
 
     def parse_tweets(self):
         page = bs(self.page_source, 'lxml')
@@ -86,8 +88,9 @@ class Twibot(wd.Chrome):
 
     sources = list()
 
-    def add_source(self, name: str, path: str):
-        self.sources.append(Adress(name, path))
+    def add_source(self, name:str, path:str):
+        self.sources.append(Source_Adress(name, path))
+        return
 
     def crawl(self):
         for src in self.sources:
@@ -109,20 +112,25 @@ class Twibot(wd.Chrome):
 
             tweets = driver.parse_tweets()
 
-            with open('%s_data_base.csv' % src.name, 'w+') as db_file:
-                db_file.write('"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"\n' %
-                            ('id', 'text', 'user_screen_name', 'username', 'date', 'retweets', 'likes', 'replies'))
-                for tweet in tweets:
-                    db_file.write('"%i", "%s", "%s", "%s", "%i", "%i", "%i", "%i"\n' %
-                                (tweet.id, tweet.text, tweet.user_screen_name, tweet.username, tweet.date, tweet.retweets, tweet.likes, tweet.replies))
+            save_tweets_as_csv(src, tweets)
 
         return
 
     def crawl_for_sources_in_following(self):
         self.add_source('CeciliaMinuzzi',
                           'https://twitter.com/CeciliaMinuzzi')
+        return
 
-class Tweet():
+def save_tweets_as_csv(src:Source_Adress, tweets:list):
+    with open('%s_data_base.csv' % src.name, 'w+') as db_file:
+        db_file.write('"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"\n' %
+                        ('id', 'text', 'user_screen_name', 'username', 'date', 'retweets', 'likes', 'replies'))
+        for tweet in tweets:
+            db_file.write('"%i", "%s", "%s", "%s", "%i", "%i", "%i", "%i"\n' %
+                            (tweet.id, tweet.text, tweet.user_screen_name, tweet.username, tweet.date, tweet.retweets, tweet.likes, tweet.replies))
+    return
+
+class Tweet(object):
     def __init__(self, id, text=None, username=None, user_screen_name=None, date=0, retweets=0, likes=0, replies=0):
         self.id = int(id)
         self.text = text
@@ -132,11 +140,13 @@ class Tweet():
         self.retweets = int(retweets)
         self.likes = int(likes)
         self.replies = int(replies)
+        return
 
-class Adress():
+class Source_Adress(object):
     def __init__(self, name: str, path: str):
         self.name = name
         self.path = path
+        return
 
 if __name__ == "__main__":
     with open('key', 'r') as key:
