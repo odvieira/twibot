@@ -3,10 +3,37 @@ from selenium import webdriver as wd
 from bs4 import BeautifulSoup as bs
 import time
 
+class Error(Exception):
+    def __init__(self, name:str, desc:str):
+        super().__init__()
+        self.msg = 'Error in module Twibot[In function:%s]: %s' % (name, desc)
+        return
+
+class Tweet(object):
+    def __init__(self, id, text=None, username=None, user_screen_name=None, date=0, retweets=0, likes=0, replies=0):
+        self.id = int(id)
+        self.text = text
+        self.username = username
+        self.user_screen_name = user_screen_name
+        self.date = int(date)
+        self.retweets = int(retweets)
+        self.likes = int(likes)
+        self.replies = int(replies)
+        return
+
+class Source_Adress(object):
+    def __init__(self, name: str, path: str):
+        self.name = name
+        self.path = path
+        return
+
 class Twibot(wd.Chrome):
     def __init__(self, username, password):
         super().__init__()
         self.implicitly_wait(1)
+
+        self.username = username
+        self.password = password
 
         # open the web page in the browser:
         self.get("https://twitter.com/login")
@@ -88,64 +115,67 @@ class Twibot(wd.Chrome):
 
     sources = list()
 
-    def add_source(self, name:str, path:str):
-        self.sources.append(Source_Adress(name, path))
+    def add_source(self, name: str, path: str):
+        new = Source_Adress(name, path)
+        if new not in self.sources:
+            self.sources.append(new)
+        else:
+            raise Error('Twibot.add_source', 'Trying to add an source already added')
         return
 
     def crawl(self):
         for src in self.sources:
             self.get(src.path)
             
-            last_height = 0
-            new_height = driver.execute_script("return document.body.scrollHeight")
+            self.scroll_down()
 
-            while last_height < new_height:
+            tweets = driver.parse_tweets()
+
+            self.save_tweets_as_csv(src, tweets)
+
+        return
+
+    def crawl_for_sources_in_following(self):
+        self.get('https://twitter.com/%s/following' % self.username)
+        self.scroll_down()
+        page = bs(self.page_source, 'lxml')
+
+        for grid in page.find_all("div", class_="Grid"):
+            for cell in grid.find_all("div", class_="Grid-cell"):
+                elem = cell.find("div", class_="ProfileCard")
+                if elem is not None:
+                    uname = elem['data-screen-name']
+                    try:
+                        self.add_source(uname, 'https://twitter.com/%s' % uname)
+                    except Error as e:
+                        print(e.msg)
+        return
+        
+    def scroll_down(self, scrolls: int = -1):
+        last_height = 0
+        new_height = self.execute_script("return document.body.scrollHeight")
+
+        while last_height < new_height and scrolls != 0:
                 last_height = new_height
 
-                #driver.execute_script(\
-                #    "window.scrollTo(0, document.body.scrollHeight);")
+                driver.execute_script(\
+                    "window.scrollTo(0, document.body.scrollHeight);")
 
                 time.sleep(2)
 
                 new_height = driver.execute_script(
                     "return document.body.scrollHeight")
 
-            tweets = driver.parse_tweets()
-
-            save_tweets_as_csv(src, tweets)
-
+                scrolls -= 1
         return
 
-    def crawl_for_sources_in_following(self):
-        self.add_source('CeciliaMinuzzi',
-                          'https://twitter.com/CeciliaMinuzzi')
-        return
-
-def save_tweets_as_csv(src:Source_Adress, tweets:list):
-    with open('%s_data_base.csv' % src.name, 'w+') as db_file:
-        db_file.write('"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"\n' %
+    def save_tweets_as_csv(self, src: Source_Adress, tweets: list):
+        with open('%s_data_base.csv' % src.name, 'w+') as db_file:
+            db_file.write('"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"\n' %
                         ('id', 'text', 'user_screen_name', 'username', 'date', 'retweets', 'likes', 'replies'))
-        for tweet in tweets:
-            db_file.write('"%i", "%s", "%s", "%s", "%i", "%i", "%i", "%i"\n' %
+            for tweet in tweets:
+                db_file.write('"%i", "%s", "%s", "%s", "%i", "%i", "%i", "%i"\n' %
                             (tweet.id, tweet.text, tweet.user_screen_name, tweet.username, tweet.date, tweet.retweets, tweet.likes, tweet.replies))
-    return
-
-class Tweet(object):
-    def __init__(self, id, text=None, username=None, user_screen_name=None, date=0, retweets=0, likes=0, replies=0):
-        self.id = int(id)
-        self.text = text
-        self.username = username
-        self.user_screen_name = user_screen_name
-        self.date = int(date)
-        self.retweets = int(retweets)
-        self.likes = int(likes)
-        self.replies = int(replies)
-        return
-
-class Source_Adress(object):
-    def __init__(self, name: str, path: str):
-        self.name = name
-        self.path = path
         return
 
 if __name__ == "__main__":
