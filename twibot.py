@@ -161,6 +161,9 @@ class Twibot(wd.Chrome):
 
     def crawl_sources(self, crawl_limit: int):
         for src in self.sources:
+            if crawl_limit <= 0:
+                break
+
             self.get('%s/with_replies' % src.uri)
 
             self.scroll_down(0)
@@ -169,8 +172,7 @@ class Twibot(wd.Chrome):
 
             self.save_tweets_as_csv(src, tweets)
 
-            if count >= crawl_limit:
-                break
+            crawl_limit -= 1
 
         self.save_profile()
         return
@@ -280,6 +282,6 @@ if __name__ == "__main__":
 
     # driver.crawl_for_sources_in_following()
 
-    driver.crawl_sources()
+    driver.crawl_sources(1)
 
     driver.close()
