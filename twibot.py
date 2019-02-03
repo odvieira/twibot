@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 from selenium import webdriver as wd
 from bs4 import BeautifulSoup as bs
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
 import os
 import errno
 import sys
 import csv
+
+
+class Source_Adress(object):
+    def __init__(self, name: str, uri: str, user_id: int):
+        self.name = name
+        self.uri = uri
+        self.user_id = int(user_id)
+        return
 
 
 class Tweet(object):
@@ -29,24 +40,17 @@ class Tweet(object):
         return
 
 
-class Source_Adress(object):
-    def __init__(self, name: str, uri: str, user_id: int):
-        self.name = name
-        self.uri = uri
-        self.user_id = int(user_id)
-        return
-
-
 class Twibot(wd.Chrome):
     def __init__(self, username, password):
         super().__init__()
-        self.implicitly_wait(1)
 
         self.user_id = 0
         self.username = username
         self.password = password
-        self.parsed_users = list()
+        self.parsed_users_history = list()
+        self.parsed_users_season = list()
         self.sources = list()
+        self.following = list()
 
         # open the web page in the browser:
         self.get("https://twitter.com/login")
@@ -64,21 +68,23 @@ class Twibot(wd.Chrome):
         # click the "Log In" button:
         self.find_element_by_class_name("EdgeButtom--medium").click()
 
-        time.sleep(1)
+        # Load users already parsed
+        if os.path.exists('./data/hist/parsed_users_history.csv'):
+            with open('./data/hist/parsed_users_history.csv', 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    self.parsed_users_history.append(int(row['user_id']))
 
-        self.user_id = int(self.find_element_by_class_name(
-            'Avatar').get_attribute('data-user-id'))
+        self.parsed_users_history.sort()
+
+        element = WebDriverWait(self, 10).until(
+            EC.presence_of_element_located((By.CLASS_NAME, 'Avatar'))
+        )
+
+        self.user_id = int(element.get_attribute('data-user-id'))
 
         self.add_source(self.username,
                         'https://twitter.com/%s' % self.username, self.user_id)
-
-        if os.path.exists('./data/hist/parsed_users.csv'):
-            with open('./data/hist/parsed_users.csv', 'r') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    self.parsed_users.append(
-                        Source_Adress(row['username'],
-                                      row['uri'], row['user_id']))
         return
 
     def close(self):
@@ -147,38 +153,67 @@ class Twibot(wd.Chrome):
 
         return tweets
 
+    def binary_search(self, alist: list, item: int):
+        first = 0
+        last = len(alist)-1
+
+        while first <= last:
+            midpoint = (first + last)//2
+            if alist[midpoint] == item:
+                return True
+            else:
+                if item < alist[midpoint]:
+                    last = midpoint-1
+                else:
+                    first = midpoint+1
+
+        return False
+
     def add_source(self, name: str, uri: str, user_id: int):
-        for i in self.sources:
-            if name == i.name:
-                return
-        for i in self.parsed_users:
-            if name == i.name:
-                return
+        if self.binary_search(self.parsed_users_history, int(user_id)):
+            return
+        if self.binary_search(self.parsed_users_season, int(user_id)):
+            return
+        else:
+            for i in self.sources:
+                if user_id == i.user_id:
+                    return
 
         self.sources.append(Source_Adress(name, uri, user_id))
 
         return
 
+    def add_following(self, name: str, uri: str, user_id: int):
+        for i in self.following:
+            if user_id == i.user_id:
+                return
+
+        self.following.append(Source_Adress(name, uri, user_id))
+
+        return
+
     def crawl_sources(self, crawl_limit: int):
         for src in self.sources:
-            if crawl_limit <= 0:
-                break
+            if crawl_limit > 0:
+                self.get('%s/with_replies' % src.uri)
+                self.scroll_down(0)
 
-            self.get('%s/with_replies' % src.uri)
+                tweets = self.parse_tweets()
 
-            self.scroll_down(0)
+                self.save_tweets_as_csv(src, tweets)
+                self.parsed_users_season.append(int(src.user_id))
 
-            tweets = driver.parse_tweets()
+                crawl_limit -= 1
 
-            self.save_tweets_as_csv(src, tweets)
-
-            crawl_limit -= 1
-
+        self.parsed_users_season.sort()
         self.save_profile()
         return
 
-    def crawl_for_sources_in_following(self):
-        self.get('https://twitter.com/%s/following' % self.username)
+    def crawl_for_sources_in_following(self, username_tag: str = None):
+        if username_tag is None:
+            username_tag = self.username
+
+        self.get('https://twitter.com/%s/following' % username_tag)
         self.scroll_down(0)
 
         page = bs(self.page_source, 'lxml')
@@ -189,8 +224,12 @@ class Twibot(wd.Chrome):
                 if elem is not None:
                     uname = elem['data-screen-name']
                     user_id = elem['data-user-id']
-                    self.add_source(uname,
-                                    'https://twitter.com/%s' % uname, user_id)
+                    self.add_source(
+                        uname, 'https://twitter.com/%s' % uname, int(user_id))
+                    self.add_following(
+                        uname, 'https://twitter.com/%s' % uname, int(user_id))
+
+        self.save_following()
         return
 
     def scroll_down(self, scrolls: int = -1):
@@ -203,7 +242,7 @@ class Twibot(wd.Chrome):
             driver.execute_script(
                 "window.scrollTo(0, document.body.scrollHeight);")
 
-            time.sleep(1)
+            time.sleep(2)
 
             new_height = driver.execute_script(
                 "return document.body.scrollHeight")
@@ -219,29 +258,35 @@ class Twibot(wd.Chrome):
             if e.errno != errno.EEXIST:
                 raise
 
-    def save_profile(self):
+    def save_following(self):
         dir_location = './data/collected/%s/%s' % (self.user_id, self.username)
-        hist = './data/hist'
-
         self.create_dir_to_save(dir_location)
+
+        with open(
+            '%s/%s_following.csv' % (dir_location, self.username),
+                'w+') as following:
+
+            following.write('"%s","%s","%s"\n' %
+                            ('username', 'uri', 'user_id'))
+
+            for i in self.following:
+                following.write(
+                    '"%s","%s","%i"\n' % (i.name, i.uri, i.user_id))
+
+    def save_profile(self):
+        hist = './data/hist'
         self.create_dir_to_save(hist)
 
         with open(
-                "%s/parsed_users.csv" % hist, 'a') as parsed:
-            with open(
-                '%s/%s_following.csv' % (dir_location, self.username),
-                    'w+') as following:
+                "%s/parsed_users_history.csv" % hist, 'a') as parsed:
 
-                if os.stat("./data/hist/parsed_users.csv").st_size == 0:
-                    parsed.write('"%s","%s","%s"\n' %
-                                 ('username', 'uri', 'user_id'))
+            if os.stat("./data/hist/parsed_users_history.csv").st_size == 0:
+                parsed.write('"%s","%s","%s"\n' %
+                             ('username', 'uri', 'user_id'))
 
-                following.write('"%s","%s","%s"\n' %
-                                ('username', 'uri', 'user_id'))
-
-                for i in self.sources:
-                    following.write(
-                        '"%s","%s","%i"\n' % (i.name, i.uri, i.user_id))
+            for i in self.sources:
+                if self.binary_search(
+                        self.parsed_users_season, i.user_id):
                     parsed.write(
                         '"%s","%s","%i"\n' % (i.name, i.uri, i.user_id))
         return
@@ -280,8 +325,8 @@ if __name__ == "__main__":
 
     del(cred)
 
-    # driver.crawl_for_sources_in_following()
+    driver.crawl_for_sources_in_following()
 
-    driver.crawl_sources(1)
+    driver.crawl_sources(5)
 
     driver.close()
