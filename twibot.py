@@ -192,18 +192,20 @@ class Twibot(wd.Chrome):
 
         return
 
-    def crawl_sources(self, crawl_limit: int):
+    def crawl_sources(self, crawl_limit: int=-1):
         for src in self.sources:
-            if crawl_limit > 0:
-                self.get('%s/with_replies' % src.uri)
-                self.scroll_down(0)
+            if crawl_limit == 0:
+                break
 
-                tweets = self.parse_tweets()
+            self.get('%s/with_replies' % src.uri)
+            self.scroll_down(5)
 
-                self.save_tweets_as_csv(src, tweets)
-                self.parsed_users_season.append(int(src.user_id))
+            tweets = self.parse_tweets()
 
-                crawl_limit -= 1
+            self.save_tweets_as_csv(src, tweets)
+            self.parsed_users_season.append(int(src.user_id))
+
+            crawl_limit -= 1
 
         self.parsed_users_season.sort()
         self.save_profile()
@@ -214,7 +216,7 @@ class Twibot(wd.Chrome):
             username_tag = self.username
 
         self.get('https://twitter.com/%s/following' % username_tag)
-        self.scroll_down(0)
+        self.scroll_down(5)
 
         page = bs(self.page_source, 'lxml')
 
@@ -327,6 +329,6 @@ if __name__ == "__main__":
 
     driver.crawl_for_sources_in_following()
 
-    driver.crawl_sources(5)
+    driver.crawl_sources()
 
     driver.close()
