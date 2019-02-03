@@ -9,23 +9,31 @@ import csv
 
 
 class Tweet(object):
-    def __init__(self, id, text=None, username=None, user_screen_name=None, date=0, retweets=0, likes=0, replies=0):
-        self.id = int(id)
+    def __init__(self, tweet_id: int, user_id: int, text=None, username=None, user_screen_name=None, date=0, retweets=0, likes=0, replies=0):
+        self.tweet_id = int(tweet_id)
         self.text = text
         self.username = username
         self.user_screen_name = user_screen_name
+        self.user_id = int(user_id)
         self.date = int(date)
         self.retweets = int(retweets)
         self.likes = int(likes)
         self.replies = int(replies)
+
+        self.dictionary = dict(
+            tweet_id=self.tweet_id, user_id=self.user_id,
+            text=self.text, user_screen_name=self.user_screen_name,
+            username=self.username, date=self.date,
+            retweets=self.retweets, likes=self.likes,
+            replies=self.replies)
         return
 
 
 class Source_Adress(object):
-    def __init__(self, name: str, uri: str, id:int):
+    def __init__(self, name: str, uri: str, user_id: int):
         self.name = name
         self.uri = uri
-        self.id = id
+        self.user_id = int(user_id)
         return
 
 
@@ -34,8 +42,11 @@ class Twibot(wd.Chrome):
         super().__init__()
         self.implicitly_wait(1)
 
+        self.user_id = 0
         self.username = username
         self.password = password
+        self.parsed_users = list()
+        self.sources = list()
 
         # open the web page in the browser:
         self.get("https://twitter.com/login")
@@ -53,15 +64,21 @@ class Twibot(wd.Chrome):
         # click the "Log In" button:
         self.find_element_by_class_name("EdgeButtom--medium").click()
 
-        self.parsed_users = list()
-        self.sources = list()
+        time.sleep(1)
+
+        self.user_id = int(self.find_element_by_class_name(
+            'Avatar').get_attribute('data-user-id'))
+
+        self.add_source(self.username,
+                        'https://twitter.com/%s' % self.username, self.user_id)
 
         if os.path.exists('./data/hist/parsed_users.csv'):
             with open('./data/hist/parsed_users.csv', 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     self.parsed_users.append(
-                        Source_Adress(row['username'], row['uri']))
+                        Source_Adress(row['username'],
+                                      row['uri'], row['user_id']))
         return
 
     def close(self):
@@ -97,6 +114,7 @@ class Twibot(wd.Chrome):
                 if user_details_div is not None:
                     user_screen_name = user_details_div['data-screen-name']
                     username = user_details_div['data-name']
+                    user_id = int(user_details_div['data-user-id'])
 
                 # Tweet date
                 date_span = li.find("span", class_="_timestamp")
@@ -121,23 +139,29 @@ class Twibot(wd.Chrome):
                 if reply_span is not None and len(reply_span) > 0:
                     replies = int(reply_span[0]['data-tweet-stat-count'])
 
-                tweets.append(Tweet(id=tweet_id, text=text, username=username, user_screen_name=user_screen_name,
-                                    date=created_at, replies=replies, likes=likes, retweets=retweets))
+                tweets.append(
+                    Tweet(tweet_id=tweet_id, user_id=user_id, text=text,
+                          username=username, user_screen_name=user_screen_name,
+                          date=created_at, replies=replies, likes=likes,
+                          retweets=retweets))
 
         return tweets
 
-    def add_source(self, name: str, uri: str):
+    def add_source(self, name: str, uri: str, user_id: int):
+        for i in self.sources:
+            if name == i.name:
+                return
         for i in self.parsed_users:
             if name == i.name:
                 return
 
-        self.sources.append(Source_Adress(name, uri))
+        self.sources.append(Source_Adress(name, uri, user_id))
 
         return
 
-    def crawl(self):
+    def crawl_sources(self, crawl_limit: int):
         for src in self.sources:
-            self.get(src.uri)
+            self.get('%s/with_replies' % src.uri)
 
             self.scroll_down(0)
 
@@ -145,13 +169,16 @@ class Twibot(wd.Chrome):
 
             self.save_tweets_as_csv(src, tweets)
 
-            self.save_profile()
+            if count >= crawl_limit:
+                break
 
+        self.save_profile()
         return
 
     def crawl_for_sources_in_following(self):
         self.get('https://twitter.com/%s/following' % self.username)
-        self.scroll_down()
+        self.scroll_down(0)
+
         page = bs(self.page_source, 'lxml')
 
         for grid in page.find_all("div", class_="Grid"):
@@ -159,7 +186,9 @@ class Twibot(wd.Chrome):
                 elem = cell.find("div", class_="ProfileCard")
                 if elem is not None:
                     uname = elem['data-screen-name']
-                    self.add_source(uname, 'https://twitter.com/%s' % uname)
+                    user_id = elem['data-user-id']
+                    self.add_source(uname,
+                                    'https://twitter.com/%s' % uname, user_id)
         return
 
     def scroll_down(self, scrolls: int = -1):
@@ -172,7 +201,7 @@ class Twibot(wd.Chrome):
             driver.execute_script(
                 "window.scrollTo(0, document.body.scrollHeight);")
 
-            time.sleep(2)
+            time.sleep(1)
 
             new_height = driver.execute_script(
                 "return document.body.scrollHeight")
@@ -180,48 +209,58 @@ class Twibot(wd.Chrome):
             scrolls -= 1
         return
 
-    def create_dir_to_save(self, location: str):
+    def create_dir_to_save(self, dir_location: str):
         try:
-            if not os.path.exists(location):
-                os.makedirs(location)
+            if not os.path.exists(dir_location):
+                os.makedirs(dir_location)
         except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
 
     def save_profile(self):
-        location = './data/collected/%s' % self.username
+        dir_location = './data/collected/%s/%s' % (self.user_id, self.username)
         hist = './data/hist'
 
-        self.create_dir_to_save(location)
+        self.create_dir_to_save(dir_location)
         self.create_dir_to_save(hist)
 
         with open(
                 "%s/parsed_users.csv" % hist, 'a') as parsed:
             with open(
-                '%s/%s_following.csv' % (location, self.username),
+                '%s/%s_following.csv' % (dir_location, self.username),
                     'w+') as following:
 
                 if os.stat("./data/hist/parsed_users.csv").st_size == 0:
-                    parsed.write('"%s","%s"\n' % ('username', 'uri'))
+                    parsed.write('"%s","%s","%s"\n' %
+                                 ('username', 'uri', 'user_id'))
 
-                following.write('"%s","%s"\n' % ('username', 'uri'))
+                following.write('"%s","%s","%s"\n' %
+                                ('username', 'uri', 'user_id'))
 
                 for i in self.sources:
-                    following.write('"%s","%s"\n' % (i.name, i.uri))
-                    parsed.write('"%s","%s"\n' % (i.name, i.uri))
+                    following.write(
+                        '"%s","%s","%i"\n' % (i.name, i.uri, i.user_id))
+                    parsed.write(
+                        '"%s","%s","%i"\n' % (i.name, i.uri, i.user_id))
         return
 
-    def save_tweets_as_csv(self, src: Source_Adress, tweets: list):
-        location = './data/collected/%s' % src.name
+    def save_tweets_as_csv(self, src: Source_Adress, tweets: list()):
+        dir_location = './data/collected/%s/%s' % (src.user_id, src.name)
 
-        self.create_dir_to_save(location)
+        self.create_dir_to_save(dir_location)
 
-        with open('%s/%s_data_base.csv' % (location, src.name), 'w+') as db_file:
-            db_file.write('"%s", "%s", "%s", "%s", "%s", "%s", "%s", "%s"\n' %
-                          ('id', 'text', 'user_screen_name', 'username', 'date', 'retweets', 'likes', 'replies'))
+        with open('%s/%s_data_base.csv' % (dir_location, src.name), 'w+') as db_file:
+
+            writer = csv.DictWriter(
+                db_file, ['tweet_id', 'user_id', 'text',
+                          'user_screen_name', 'username', 'date',
+                          'retweets', 'likes', 'replies'])
+
+            writer.writeheader()
+
             for tweet in tweets:
-                db_file.write('"%i", "%s", "%s", "%s", "%i", "%i", "%i", "%i"\n' %
-                              (tweet.id, tweet.text, tweet.user_screen_name, tweet.username, tweet.date, tweet.retweets, tweet.likes, tweet.replies))
+                writer.writerow(tweet.dictionary)
+
         return
 
 
@@ -239,8 +278,8 @@ if __name__ == "__main__":
 
     del(cred)
 
-    driver.crawl_for_sources_in_following()
+    # driver.crawl_for_sources_in_following()
 
-    driver.crawl()
+    driver.crawl_sources()
 
     driver.close()
